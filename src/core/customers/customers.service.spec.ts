@@ -63,7 +63,7 @@ describe('CustomersService', () => {
 
   describe('create', () => {
     it('should create and return a customer', async () => {
-      const dto = { name: 'Jane Doe', phoneNumber: '9800000002' };
+      const dto = { name: 'Jane Doe', phoneNumber: '9800000002', address: { street: '456 Oak Ave', city: 'Pokhara' } };
       const customer = { ...mockCustomer(), ...dto };
 
       customerRepo.findOne.mockResolvedValue(null);
@@ -78,7 +78,7 @@ describe('CustomersService', () => {
     it('should throw ConflictException when phone already exists', async () => {
       customerRepo.findOne.mockResolvedValue(mockCustomer());
 
-      await expect(service.create({ name: 'Dup', phoneNumber: '9800000001' })).rejects.toThrow(ConflictException);
+      await expect(service.create({ name: 'Dup', phoneNumber: '9800000001', address: { city: 'Kathmandu' } })).rejects.toThrow(ConflictException);
     });
   });
 
@@ -108,6 +108,7 @@ describe('CustomersService', () => {
       await service.findOrCreate({
         phoneNumber: customer.phoneNumber,
         name: 'Updated Name',
+        address: customer.address,
       });
 
       expect(customerRepo.save).toHaveBeenCalled();
@@ -119,7 +120,7 @@ describe('CustomersService', () => {
       customerRepo.create.mockReturnValue(newCustomer);
       customerRepo.save.mockResolvedValue(newCustomer);
 
-      await service.findOrCreate({ phoneNumber: '9800000099', name: 'New Guest' });
+      await service.findOrCreate({ phoneNumber: '9800000099', name: 'New Guest', address: { city: 'Lalitpur' } });
 
       expect(customerRepo.create).toHaveBeenCalled();
     });

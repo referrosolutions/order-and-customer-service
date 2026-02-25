@@ -150,6 +150,16 @@ export class OrdersController {
     return this.ordersService.getOrderTotals(body.order_ids ?? []);
   }
 
+  @Get('track/phone/:phoneNumber')
+  @ApiOperation({
+    summary: 'Track all active orders by phone number (Public)',
+    description: 'Returns all PENDING, PAID, and SHIPPED orders for the given phone number.',
+  })
+  @ApiResponse({ status: 200, description: 'Active orders returned' })
+  async trackByPhone(@Param('phoneNumber') phoneNumber: string) {
+    return this.ordersService.trackOrdersByPhone(phoneNumber);
+  }
+
   @Post('track')
   @ApiOperation({ summary: 'Track order (Public - requires order ID and phone)' })
   @ApiResponse({ status: 200, description: 'Order tracking info retrieved' })

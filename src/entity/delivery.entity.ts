@@ -21,8 +21,8 @@ export class Delivery {
   @Column({ unique: true })
   order_id: string;
 
-  @Column({ type: 'varchar', length: 100 })
-  tracking_number: string;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  tracking_number: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   tracking_url: string | null;

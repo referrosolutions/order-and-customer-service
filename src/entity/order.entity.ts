@@ -26,7 +26,7 @@ export class Order {
   customer_id: string;
 
   @Index()
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   creator_id: string | null;
 
   @Column({ length: 50 })

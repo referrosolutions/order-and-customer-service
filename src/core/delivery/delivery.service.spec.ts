@@ -12,7 +12,7 @@ const mockDelivery = (): Delivery => ({
   delivery_method: 'standard',
   delivery_charge: 100,
   status: DELIVERY_STATUS.PENDING,
-  tracking_number: null,
+  tracking_number: '',
   tracking_url: null,
   created_at: new Date('2025-01-01'),
   updated_at: new Date('2025-01-01'),

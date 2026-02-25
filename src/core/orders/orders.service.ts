@@ -399,6 +399,61 @@ export class OrdersService {
     }
   }
 
+  async trackOrdersByPhone(phoneNumber: string): Promise<{
+    orders: Array<{
+      order_id: string;
+      status: ORDER_STATUS;
+      delivery: {
+        status: DELIVERY_STATUS;
+        tracking_number: string | null;
+        tracking_url: string | null;
+        delivery_method: string;
+      };
+      created_at: Date;
+      updated_at: Date;
+    }>;
+  }> {
+    try {
+      let customer;
+      try {
+        customer = await this.customersService.findByPhone(phoneNumber);
+      } catch {
+        return { orders: [] };
+      }
+
+      const orders = await this.orderRepo.find({
+        where: [
+          { customer_id: customer.id, status: ORDER_STATUS.PENDING },
+          { customer_id: customer.id, status: ORDER_STATUS.PAID },
+          { customer_id: customer.id, status: ORDER_STATUS.SHIPPED },
+        ],
+        relations: ['delivery'],
+        order: { created_at: 'DESC' },
+      });
+
+      return {
+        orders: orders.map((order) => ({
+          order_id: order.id,
+          status: order.status,
+          delivery: {
+            status: order.delivery?.status ?? DELIVERY_STATUS.PENDING,
+            tracking_number: order.delivery?.tracking_number ?? null,
+            tracking_url: order.delivery?.tracking_url ?? null,
+            delivery_method: order.delivery?.delivery_method ?? 'standard',
+          },
+          created_at: order.created_at,
+          updated_at: order.updated_at,
+        })),
+      };
+    } catch (error) {
+      handleServiceError(
+        error,
+        'Failed to track orders by phone',
+        'OrdersService',
+      );
+    }
+  }
+
   async findByVendor(
     vendorId: string,
     query: OrderQueryDto,

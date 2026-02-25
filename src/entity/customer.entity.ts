@@ -16,14 +16,17 @@ export class Customer extends BaseEntity {
   @Index()
   phoneNumber: string;
 
-  @Column({ type: 'jsonb', nullable: true })
-  address?: {
+  @Column({ type: 'jsonb' })
+  address: {
     street?: string;
     city?: string;
     state?: string;
     postalCode?: string;
     country?: string;
   };
+
+  @Column({ type: 'varchar', nullable: true })
+  email?: string;
 
   @Column({ name: 'user_id', type: 'uuid', nullable: true })
   @Index()

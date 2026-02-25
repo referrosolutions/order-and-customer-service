@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsObject, ValidateNested, Length } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsObject, IsEmail, ValidateNested, Length } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -41,12 +41,16 @@ export class FindOrCreateCustomerDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiPropertyOptional({ description: 'Customer address' })
-  @IsOptional()
+  @ApiProperty({ description: 'Customer delivery address' })
   @IsObject()
   @ValidateNested()
   @Type(() => AddressDto)
-  address?: AddressDto;
+  address: AddressDto;
+
+  @ApiPropertyOptional({ description: 'Customer email address' })
+  @IsOptional()
+  @IsEmail()
+  email?: string;
 
   @ApiPropertyOptional({ description: 'Link to auth-service user ID' })
   @IsOptional()
