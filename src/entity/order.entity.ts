@@ -29,6 +29,10 @@ export class Order {
   @Column({ type: 'uuid', nullable: true })
   creator_id: string | null;
 
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  affiliate_id: string | null;
+
   @Column({ length: 50 })
   payment_method: string;
 

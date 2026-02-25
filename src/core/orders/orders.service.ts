@@ -52,6 +52,7 @@ export class OrdersService {
         const order = manager.create(Order, {
           customer_id: customerId,
           creator_id: dto.creator_id ?? null,
+          affiliate_id: dto.affiliate_id ?? null,
           payment_method: dto.payment_method,
           total_amount: totalAmount,
           status: ORDER_STATUS.PENDING,
@@ -143,20 +144,39 @@ export class OrdersService {
         }) as Promise<Order>;
       });
 
-      // 3. Fire-and-forget conversion attribution (non-blocking)
+      // 3. Resolve affiliate attribution — awaitable with graceful fallback
       if (dto.affiliate_session_id) {
         const affiliateServiceUrl =
           process.env.AFFILIATE_SERVICE_URL || 'http://localhost:9003';
-        fetch(`${affiliateServiceUrl}/v1/tracking/convert`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: dto.affiliate_session_id,
-            order_id: order.id,
-          }),
-        }).catch((err: Error) => {
-          this.logger.warn(`Failed to mark affiliate conversion: ${err.message}`);
-        });
+        try {
+          const res = await fetch(`${affiliateServiceUrl}/v1/tracking/convert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: dto.affiliate_session_id,
+              order_id: order.id,
+            }),
+            signal: AbortSignal.timeout(3000),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              creator_id?: string;
+              affiliate_id?: string;
+            } | null;
+            if (data && (data.creator_id || data.affiliate_id)) {
+              await this.orderRepo.update(order.id, {
+                creator_id: data.creator_id ?? null,
+                affiliate_id: data.affiliate_id ?? null,
+              });
+              order.creator_id = data.creator_id ?? null;
+              order.affiliate_id = data.affiliate_id ?? null;
+            }
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Affiliate attribution failed (order still created): ${(err as Error).message}`,
+          );
+        }
       }
 
       return order;

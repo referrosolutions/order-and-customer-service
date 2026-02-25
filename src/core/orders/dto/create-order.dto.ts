@@ -51,6 +51,14 @@ export class CreateOrderDto {
   @IsOptional()
   creator_id?: string;
 
+  @ApiPropertyOptional({
+    description: 'Affiliate link ID used to reach the product',
+    format: 'uuid',
+  })
+  @IsUUID()
+  @IsOptional()
+  affiliate_id?: string;
+
   @ApiProperty({
     description: 'Order items (at least one required)',
     type: [CreateOrderItemDto],
