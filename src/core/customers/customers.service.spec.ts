@@ -2,10 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { CustomersService } from './customers.service';
 import { Customer } from 'src/entity/customer.entity';
+import { Order } from 'src/entity/order.entity';
 import { ORDER_STATUS, PAYMENT_METHOD } from 'src/core/enums';
-import type { Order } from 'src/entity/order.entity';
 
 const mockCustomer = (): Customer => ({
   id: 'customer-uuid-1',
@@ -22,10 +23,16 @@ const mockCustomer = (): Customer => ({
 const mockOrder = (): Order => ({
   id: 'order-uuid-1',
   customer_id: 'customer-uuid-1',
+  store_id: null,
   creator_id: null,
   payment_method: PAYMENT_METHOD.COD,
-  total_amount: 500,
+  ispaid: false,
+  subtotal: 500,
+  delivery_fee: 0,
+  discount_amount: 0,
+  grand_total: 500,
   status: ORDER_STATUS.PENDING,
+  shipping_address: null,
   items: [],
   delivery: null,
   customer: null,
@@ -46,10 +53,21 @@ describe('CustomersService', () => {
       softDelete: jest.fn(),
     };
 
+    const mockOrderRepo = {
+      createQueryBuilder: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getQuery: jest.fn().mockReturnValue(''),
+        getParameters: jest.fn().mockReturnValue({}),
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CustomersService,
         { provide: getRepositoryToken(Customer), useValue: mockRepo },
+        { provide: getRepositoryToken(Order), useValue: mockOrderRepo },
+        { provide: JwtService, useValue: { verifyAsync: jest.fn() } },
       ],
     }).compile();
 
@@ -206,8 +224,8 @@ describe('CustomersService', () => {
   describe('getOrderHistory', () => {
     it('should return typed order history with correct totals', async () => {
       const orders = [
-        { ...mockOrder(), total_amount: 300 },
-        { ...mockOrder(), total_amount: 700 },
+        { ...mockOrder(), grand_total: 300 },
+        { ...mockOrder(), grand_total: 700 },
       ];
       const customer = { ...mockCustomer(), orders };
       customerRepo.findOne.mockResolvedValue(customer);

@@ -1,13 +1,7 @@
-import {
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-  RequestMethod,
-} from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
 import { IsAuthMiddleware } from './core/middleware/isAuth.middleware';
 import { HealthModule } from './core/health/health.module';
 import { OrdersModule } from './core/orders/orders.module';
-import { DeliveryModule } from './core/delivery/delivery.module';
 import { CustomersModule } from './core/customers/customers.module';
 
 import { ConfigModule } from '@nestjs/config';
@@ -17,7 +11,6 @@ import { Request, Response } from 'express';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Order } from './entity/order.entity';
 import { OrderItem } from './entity/order-item.entity';
-import { Delivery } from './entity/delivery.entity';
 import { Customer } from './entity/customer.entity';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -43,10 +36,7 @@ import { JwtModule } from '@nestjs/jwt';
           }),
         },
         // Pretty print in dev, JSON in prod
-        transport:
-          process.env.NODE_ENV !== 'production'
-            ? { target: 'pino-pretty' }
-            : undefined,
+        transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
         // Redact sensitive data
         redact: ['req.headers.authorization'],
       },
@@ -58,7 +48,7 @@ import { JwtModule } from '@nestjs/jwt';
       username: process.env.DATABASE_USERNAME,
       password: process.env.DATABASE_PASSWORD,
       database: process.env.DATABASE_NAME,
-      entities: [Order, OrderItem, Delivery, Customer],
+      entities: [Order, OrderItem, Customer],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: false,
       ssl: {
@@ -70,7 +60,6 @@ import { JwtModule } from '@nestjs/jwt';
     HealthModule,
     CustomersModule,
     OrdersModule,
-    DeliveryModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -79,8 +68,11 @@ export class AppModule implements NestModule {
       .apply(IsAuthMiddleware)
       .exclude(
         { path: 'v1/orders/track', method: RequestMethod.POST },
+        { path: 'v1/orders/track/phone/:phoneNumber', method: RequestMethod.GET },
         { path: 'v1/orders/guest', method: RequestMethod.POST },
         { path: 'v1/orders/internal/totals', method: RequestMethod.POST },
+        { path: 'v1/customers/autofill', method: RequestMethod.POST },
+        { path: 'v1/customers/init-guest', method: RequestMethod.POST },
         { path: 'health', method: RequestMethod.GET },
       )
       .forRoutes({ path: '*path', method: RequestMethod.ALL });

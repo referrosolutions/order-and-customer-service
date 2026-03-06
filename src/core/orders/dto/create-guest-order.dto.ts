@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Min,
@@ -14,7 +15,7 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PAYMENT_METHOD } from 'src/core/enums';
-import { CreateOrderItemDto } from './create-order.dto';
+import { CreateOrderItemDto, ShippingAddressDto } from './create-order.dto';
 
 export class GuestCustomerDto {
   @ApiProperty({ description: 'Customer full name' })
@@ -34,9 +35,10 @@ export class GuestCustomerDto {
   email?: string;
 
   @ApiProperty({ description: 'Delivery address' })
-  @IsString()
-  @IsNotEmpty()
-  address: string;
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ShippingAddressDto)
+  address: ShippingAddressDto;
 }
 
 export class CreateGuestOrderDto {
@@ -64,21 +66,16 @@ export class CreateGuestOrderDto {
   @IsNotEmpty()
   payment_method: PAYMENT_METHOD;
 
-  @ApiProperty({ description: 'Delivery method', example: 'standard' })
-  @IsString()
-  @IsNotEmpty()
-  delivery_method: string;
-
-  @ApiPropertyOptional({ description: 'Delivery charge', default: 0 })
+  @ApiPropertyOptional({ description: 'Delivery fee', default: 0 })
   @IsNumber()
   @Min(0)
   @IsOptional()
-  delivery_charge?: number;
+  delivery_fee?: number;
 
-  @ApiPropertyOptional({
-    description: 'Session ID from affiliate click (for conversion attribution)',
-  })
-  @IsString()
+  @ApiPropertyOptional({ description: 'Discount amount', default: 0 })
+  @IsNumber()
+  @Min(0)
   @IsOptional()
-  affiliate_session_id?: string;
+  discount_amount?: number;
+
 }

@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { JwtService } from '@nestjs/jwt';
 import { Customer } from '../../entity/customer.entity';
+import { Order } from '../../entity/order.entity';
 import { CreateCustomerDto, UpdateCustomerDto, FindOrCreateCustomerDto } from './dto';
 import { CustomerOrderHistoryResponse } from '../../types';
 import { handleServiceError } from '../../utils/error';
@@ -11,6 +13,9 @@ export class CustomersService {
   constructor(
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+    private readonly jwtService: JwtService,
   ) {}
 
   async create(dto: CreateCustomerDto): Promise<Customer> {
@@ -50,6 +55,32 @@ export class CustomersService {
 
     customer = this.customerRepository.create(dto);
     return await this.customerRepository.save(customer);
+  }
+
+  async findByCreator(
+    creatorId: string,
+    page = 1,
+    limit = 10,
+  ): Promise<{ data: Customer[]; total: number; page: number; limit: number }> {
+    try {
+      const subQuery = this.orderRepository
+        .createQueryBuilder('order')
+        .select('DISTINCT order.customer_id')
+        .where('order.creator_id = :creatorId', { creatorId });
+
+      const [data, total] = await this.customerRepository
+        .createQueryBuilder('customer')
+        .where(`customer.id IN (${subQuery.getQuery()})`)
+        .setParameters(subQuery.getParameters())
+        .orderBy('customer.createdAt', 'DESC')
+        .skip((page - 1) * limit)
+        .take(limit)
+        .getManyAndCount();
+
+      return { data, total, page, limit };
+    } catch (error) {
+      handleServiceError(error, 'Failed to get creator customers', 'CustomersService');
+    }
   }
 
   async findAll(page = 1, limit = 10): Promise<{ data: Customer[]; total: number; page: number; limit: number }> {
@@ -120,7 +151,7 @@ export class CustomersService {
       }
 
       const totalOrders = customer.orders.length;
-      const totalSpent = customer.orders.reduce((sum, order) => sum + Number(order.total_amount), 0);
+      const totalSpent = customer.orders.reduce((sum, order) => sum + Number(order.grand_total), 0);
 
       return {
         customerId: customer.id,
@@ -136,5 +167,54 @@ export class CustomersService {
   async delete(id: string): Promise<void> {
     const customer = await this.findOne(id);
     await this.customerRepository.softDelete(customer.id);
+  }
+
+  async autofill(otp_verification_token: string): Promise<Customer | null> {
+    let phone_number: string;
+
+    try {
+      const payload = await this.jwtService.verifyAsync<{ phone_number: string }>(
+        otp_verification_token,
+        { secret: process.env.JWT_SECRET },
+      );
+      phone_number = payload.phone_number;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired OTP verification token');
+    }
+
+    const customer = await this.customerRepository.findOne({
+      where: { phoneNumber: phone_number },
+    });
+
+    return customer ?? null;
+  }
+
+  async initFromOtp(otp_verification_token: string): Promise<Customer> {
+    let phone_number: string;
+
+    try {
+      const payload = await this.jwtService.verifyAsync<{ phone_number: string }>(
+        otp_verification_token,
+        { secret: process.env.JWT_SECRET },
+      );
+      phone_number = payload.phone_number;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired OTP verification token');
+    }
+
+    let customer = await this.customerRepository.findOne({
+      where: { phoneNumber: phone_number },
+    });
+
+    if (!customer) {
+      customer = this.customerRepository.create({
+        phoneNumber: phone_number,
+        name: 'Guest User',
+        address: {},
+      });
+      await this.customerRepository.save(customer);
+    }
+
+    return customer;
   }
 }

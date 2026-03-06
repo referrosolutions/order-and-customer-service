@@ -19,8 +19,24 @@ export class OrderItem {
   order_id: string;
 
   @Index()
+  @Column({ type: 'uuid' })
+  product_id: string;
+
+  @Index()
   @Column()
   variant_id: string;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  affiliate_id: string | null;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  vendor_id: string;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  creator_id: string | null;
 
   @Column({ type: 'int' })
   quantity: number;

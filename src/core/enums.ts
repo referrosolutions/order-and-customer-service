@@ -12,12 +12,6 @@ export enum ORDER_STATUS {
   CANCELLED = 'cancelled',
 }
 
-export enum DELIVERY_STATUS {
-  PENDING = 'pending',
-  IN_TRANSIT = 'in_transit',
-  DELIVERED = 'delivered',
-}
-
 export enum PAYMENT_METHOD {
   WALLET_QR = 'wallet_qr',
   COD = 'cod',

@@ -4,15 +4,13 @@ import { IsEnum, IsNumber, IsString, validateSync } from 'class-validator';
 enum Environment {
   Development = 'development',
   Production = 'production',
-  Test = 'test',
-  Provision = 'provision',
 }
 class EnvironmentVariables {
-  @IsEnum(Environment)
-  NODE_ENV: Environment;
-
   @IsNumber()
   PORT: number;
+
+  @IsEnum(Environment)
+  NODE_ENV: Environment;
 
   @IsString()
   JWT_SECRET: string;
@@ -33,7 +31,10 @@ class EnvironmentVariables {
   DATABASE_NAME: string;
 
   @IsString()
-  CORS_ORIGINS: string;
+  NOTIFICATION_SERVICE_URL: string;
+
+  @IsString()
+  NOTIFICATION_SERVICE_API_KEY: string;
 }
 
 export function validate(config: Record<string, unknown>) {

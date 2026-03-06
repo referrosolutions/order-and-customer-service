@@ -1,27 +1,19 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import { Order } from 'src/entity/order.entity';
+import { ORDER_STATUS, ORDER_STATUS_TRANSITIONS } from 'src/core/enums';
 import { OrderItem } from 'src/entity/order-item.entity';
-import { Delivery } from 'src/entity/delivery.entity';
+import { Order } from 'src/entity/order.entity';
+import { PaginatedResponse } from 'src/types';
+import { handleServiceError } from 'src/utils/error';
+import { NotificationClient } from 'src/utils/notification.client';
+import { DataSource, Repository } from 'typeorm';
+import { CustomersService } from '../customers/customers.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
-import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { JwtPayload } from 'src/types';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { TrackOrderDto } from './dto/track-order.dto';
-import {
-  ORDER_STATUS,
-  ORDER_STATUS_TRANSITIONS,
-  DELIVERY_STATUS,
-} from 'src/core/enums';
-import { handleServiceError } from 'src/utils/error';
-import { PaginatedResponse } from 'src/types';
-import { CustomersService } from '../customers/customers.service';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
 @Injectable()
 export class OrdersService {
@@ -32,154 +24,170 @@ export class OrdersService {
     private readonly orderRepo: Repository<Order>,
     @InjectRepository(OrderItem)
     private readonly orderItemRepo: Repository<OrderItem>,
-    @InjectRepository(Delivery)
-    private readonly deliveryRepo: Repository<Delivery>,
     private readonly dataSource: DataSource,
     private readonly customersService: CustomersService,
+    private readonly notificationClient: NotificationClient,
   ) {}
 
-  async create(customerId: string, dto: CreateOrderDto): Promise<Order> {
+  private async resolveAffiliate(sessionId: string): Promise<{
+    storeId: string | null;
+    creatorId: string | null;
+    affiliateId: string | null;
+  }> {
+    const affiliateServiceUrl = process.env.AFFILIATE_SERVICE_URL || 'http://localhost:9003';
     try {
-      return await this.dataSource.transaction(async (manager) => {
-        // Calculate total amount from items
-        const totalItemsAmount = dto.items.reduce(
-          (sum, item) => sum + item.unit_price * item.quantity,
-          0,
-        );
-        const totalAmount = totalItemsAmount + (dto.delivery_charge ?? 0);
-
-        // Create the order
-        const order = manager.create(Order, {
-          customer_id: customerId,
-          creator_id: dto.creator_id ?? null,
-          affiliate_id: dto.affiliate_id ?? null,
-          payment_method: dto.payment_method,
-          total_amount: totalAmount,
-          status: ORDER_STATUS.PENDING,
-        });
-        const savedOrder = await manager.save(order);
-
-        // Create order items
-        const orderItems = dto.items.map((item) =>
-          manager.create(OrderItem, {
-            order_id: savedOrder.id,
-            variant_id: item.variant_id,
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-            total_price: item.unit_price * item.quantity,
-          }),
-        );
-        await manager.save(orderItems);
-
-        // Create delivery record
-        const delivery = manager.create(Delivery, {
-          order_id: savedOrder.id,
-          delivery_method: dto.delivery_method,
-          delivery_charge: dto.delivery_charge ?? 0,
-          status: DELIVERY_STATUS.PENDING,
-        });
-        await manager.save(delivery);
-
-        // Return the order with relations
-        return manager.findOne(Order, {
-          where: { id: savedOrder.id },
-          relations: ['items', 'delivery'],
-        }) as Promise<Order>;
+      const res = await fetch(`${affiliateServiceUrl}/v1/tracking/convert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+        signal: AbortSignal.timeout(3000),
       });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          creator_id?: string;
+          affiliate_id?: string;
+          store_id?: string;
+        } | null;
+        if (data) {
+          return {
+            storeId: data.store_id ?? null,
+            creatorId: data.creator_id ?? null,
+            affiliateId: data.affiliate_id ?? null,
+          };
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Affiliate attribution failed (order still created): ${(err as Error).message}`,
+      );
+    }
+    return { storeId: null, creatorId: null, affiliateId: null };
+  }
+
+  private async saveOrderWithItems(
+    customerId: string,
+    items: CreateOrderDto['items'],
+    paymentMethod: CreateOrderDto['payment_method'],
+    subtotal: number,
+    deliveryFee: number,
+    discountAmount: number,
+    grandTotal: number,
+    shippingAddress: CreateOrderDto['shipping_address'] | null,
+    storeId: string | null,
+    creatorId: string | null,
+    affiliateId: string | null,
+  ): Promise<Order> {
+    return this.dataSource.transaction(async (manager) => {
+      const newOrder = manager.create(Order, {
+        customer_id: customerId,
+        payment_method: paymentMethod,
+        subtotal,
+        delivery_fee: deliveryFee,
+        discount_amount: discountAmount,
+        grand_total: grandTotal,
+        ispaid: false,
+        status: ORDER_STATUS.PENDING,
+        store_id: storeId,
+        creator_id: creatorId,
+        shipping_address: shippingAddress ?? null,
+      });
+      const savedOrder = await manager.save(newOrder);
+
+      const orderItems = items.map((item) =>
+        manager.create(OrderItem, {
+          order_id: savedOrder.id,
+          product_id: item.product_id,
+          variant_id: item.variant_id,
+          affiliate_id: affiliateId,
+          vendor_id: item.vendor_id,
+          creator_id: creatorId,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.unit_price * item.quantity,
+        }),
+      );
+      await manager.save(orderItems);
+
+      return manager.findOne(Order, {
+        where: { id: savedOrder.id },
+        relations: ['items'],
+      }) as Promise<Order>;
+    });
+  }
+
+  async create(dto: CreateOrderDto, user: JwtPayload, sessionId?: string): Promise<Order> {
+    try {
+      const customer = await this.customersService.findOrCreate({
+        phoneNumber: user.phone_number,
+        name: user.name,
+        userId: user.id,
+        address: dto.shipping_address ?? {},
+      });
+
+      const subtotal = dto.items.reduce(
+        (sum, item) => sum + item.unit_price * item.quantity,
+        0,
+      );
+      const deliveryFee = dto.delivery_fee ?? 0;
+      const discountAmount = dto.discount_amount ?? 0;
+      const grandTotal = subtotal + deliveryFee - discountAmount;
+
+      const { storeId, creatorId, affiliateId } = sessionId
+        ? await this.resolveAffiliate(sessionId)
+        : { storeId: null, creatorId: null, affiliateId: null };
+
+      return await this.saveOrderWithItems(
+        customer.id,
+        dto.items,
+        dto.payment_method,
+        subtotal,
+        deliveryFee,
+        discountAmount,
+        grandTotal,
+        dto.shipping_address ?? null,
+        storeId,
+        creatorId,
+        affiliateId,
+      );
     } catch (error) {
       handleServiceError(error, 'Failed to create order', 'OrdersService');
     }
   }
 
-  async createGuestOrder(dto: CreateGuestOrderDto): Promise<Order> {
+  async createGuest(dto: CreateGuestOrderDto, sessionId?: string): Promise<Order> {
     try {
-      // 1. Find or create guest customer
       const customer = await this.customersService.findOrCreate({
-        name: dto.customer.name,
         phoneNumber: dto.customer.phone_number,
-        address: {
-          street: dto.customer.address,
-        },
+        name: dto.customer.name,
+        email: dto.customer.email,
+        address: dto.customer.address,
       });
 
-      // 2. Create order in a transaction
-      const order = await this.dataSource.transaction(async (manager) => {
-        const totalItemsAmount = dto.items.reduce(
-          (sum, item) => sum + item.unit_price * item.quantity,
-          0,
-        );
-        const totalAmount = totalItemsAmount + (dto.delivery_charge ?? 0);
+      const subtotal = dto.items.reduce(
+        (sum, item) => sum + item.unit_price * item.quantity,
+        0,
+      );
+      const deliveryFee = dto.delivery_fee ?? 0;
+      const discountAmount = dto.discount_amount ?? 0;
+      const grandTotal = subtotal + deliveryFee - discountAmount;
 
-        const newOrder = manager.create(Order, {
-          customer_id: customer.id,
-          creator_id: null,
-          payment_method: dto.payment_method,
-          total_amount: totalAmount,
-          status: ORDER_STATUS.PENDING,
-        });
-        const savedOrder = await manager.save(newOrder);
+      const { storeId, creatorId, affiliateId } = sessionId
+        ? await this.resolveAffiliate(sessionId)
+        : { storeId: null, creatorId: null, affiliateId: null };
 
-        const orderItems = dto.items.map((item) =>
-          manager.create(OrderItem, {
-            order_id: savedOrder.id,
-            variant_id: item.variant_id,
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-            total_price: item.unit_price * item.quantity,
-          }),
-        );
-        await manager.save(orderItems);
-
-        const delivery = manager.create(Delivery, {
-          order_id: savedOrder.id,
-          delivery_method: dto.delivery_method,
-          delivery_charge: dto.delivery_charge ?? 0,
-          status: DELIVERY_STATUS.PENDING,
-        });
-        await manager.save(delivery);
-
-        return manager.findOne(Order, {
-          where: { id: savedOrder.id },
-          relations: ['items', 'delivery'],
-        }) as Promise<Order>;
-      });
-
-      // 3. Resolve affiliate attribution — awaitable with graceful fallback
-      if (dto.affiliate_session_id) {
-        const affiliateServiceUrl =
-          process.env.AFFILIATE_SERVICE_URL || 'http://localhost:9003';
-        try {
-          const res = await fetch(`${affiliateServiceUrl}/v1/tracking/convert`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              session_id: dto.affiliate_session_id,
-              order_id: order.id,
-            }),
-            signal: AbortSignal.timeout(3000),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as {
-              creator_id?: string;
-              affiliate_id?: string;
-            } | null;
-            if (data && (data.creator_id || data.affiliate_id)) {
-              await this.orderRepo.update(order.id, {
-                creator_id: data.creator_id ?? null,
-                affiliate_id: data.affiliate_id ?? null,
-              });
-              order.creator_id = data.creator_id ?? null;
-              order.affiliate_id = data.affiliate_id ?? null;
-            }
-          }
-        } catch (err) {
-          this.logger.warn(
-            `Affiliate attribution failed (order still created): ${(err as Error).message}`,
-          );
-        }
-      }
-
-      return order;
+      return await this.saveOrderWithItems(
+        customer.id,
+        dto.items,
+        dto.payment_method,
+        subtotal,
+        deliveryFee,
+        discountAmount,
+        grandTotal,
+        dto.customer.address ?? null,
+        storeId,
+        creatorId,
+        affiliateId,
+      );
     } catch (error) {
       handleServiceError(error, 'Failed to create guest order', 'OrdersService');
     }
@@ -193,7 +201,6 @@ export class OrdersService {
       const queryBuilder = this.orderRepo
         .createQueryBuilder('order')
         .leftJoinAndSelect('order.items', 'items')
-        .leftJoinAndSelect('order.delivery', 'delivery')
         .orderBy('order.created_at', 'DESC')
         .skip(skip)
         .take(limit);
@@ -202,9 +209,7 @@ export class OrdersService {
         queryBuilder.andWhere('order.status = :status', { status });
       }
       if (customer_id) {
-        queryBuilder.andWhere('order.customer_id = :customer_id', {
-          customer_id,
-        });
+        queryBuilder.andWhere('order.customer_id = :customer_id', { customer_id });
       }
       if (creator_id) {
         queryBuilder.andWhere('order.creator_id = :creator_id', { creator_id });
@@ -228,7 +233,7 @@ export class OrdersService {
     try {
       const order = await this.orderRepo.findOne({
         where: { id },
-        relations: ['items', 'delivery'],
+        relations: ['items', 'customer'],
       });
 
       if (!order) {
@@ -248,10 +253,7 @@ export class OrdersService {
     return this.findAll({ ...query, customer_id: customerId });
   }
 
-  async findByCreator(
-    creatorId: string,
-    query: OrderQueryDto,
-  ): Promise<PaginatedResponse<Order>> {
+  async findByCreator(creatorId: string, query: OrderQueryDto): Promise<PaginatedResponse<Order>> {
     return this.findAll({ ...query, creator_id: creatorId });
   }
 
@@ -259,54 +261,57 @@ export class OrdersService {
     try {
       const order = await this.findOne(id);
 
-      // Validate status transition
       const allowedTransitions = ORDER_STATUS_TRANSITIONS[order.status];
       if (!allowedTransitions.includes(dto.status)) {
-        throw new BadRequestException(
-          `Cannot transition from ${order.status} to ${dto.status}`,
-        );
+        throw new BadRequestException(`Cannot transition from ${order.status} to ${dto.status}`);
       }
 
-      // If shipping, require tracking number
-      if (dto.status === ORDER_STATUS.SHIPPED && !dto.tracking_number) {
-        throw new BadRequestException(
-          'Tracking number is required when marking order as shipped',
-        );
-      }
-
-      // Update order status
       order.status = dto.status;
+
+      if (dto.status === ORDER_STATUS.PAID) {
+        order.ispaid = true;
+      }
+
       await this.orderRepo.save(order);
 
-      // Update delivery info if provided
-      if (dto.tracking_number || dto.tracking_url) {
-        const delivery = await this.deliveryRepo.findOne({
-          where: { order_id: id },
-        });
-        if (delivery) {
-          if (dto.tracking_number) {
-            delivery.tracking_number = dto.tracking_number;
-          }
-          if (dto.tracking_url) {
-            delivery.tracking_url = dto.tracking_url;
-          }
-          // Update delivery status based on order status
-          if (dto.status === ORDER_STATUS.SHIPPED) {
-            delivery.status = DELIVERY_STATUS.IN_TRANSIT;
-          } else if (dto.status === ORDER_STATUS.DELIVERED) {
-            delivery.status = DELIVERY_STATUS.DELIVERED;
-          }
-          await this.deliveryRepo.save(delivery);
+      const updatedOrder = await this.findOne(id);
+
+      if (updatedOrder.creator_id) {
+        const notificationMap: Partial<Record<ORDER_STATUS, { title: string; message: string }>> = {
+          [ORDER_STATUS.PAID]: {
+            title: 'Commission Earned',
+            message: `Order #${updatedOrder.id.slice(-8).toUpperCase()} has been paid — your commission is pending.`,
+          },
+          [ORDER_STATUS.DELIVERED]: {
+            title: 'Order Delivered',
+            message: `Order #${updatedOrder.id.slice(-8).toUpperCase()} has been successfully delivered.`,
+          },
+          [ORDER_STATUS.CANCELLED]: {
+            title: 'Order Cancelled',
+            message: `Order #${updatedOrder.id.slice(-8).toUpperCase()} has been cancelled.`,
+          },
+        };
+
+        const notif = notificationMap[dto.status];
+        if (notif) {
+          this.notificationClient
+            .send({
+              userId: updatedOrder.creator_id,
+              id: `order-${dto.status}-${updatedOrder.id}`,
+              title: notif.title,
+              message: notif.message,
+              link: `/dashboard/orders/${updatedOrder.id}`,
+              source: 'order-service',
+            })
+            .catch((err: Error) =>
+              this.logger.error(`Failed to send notification: ${err.message}`),
+            );
         }
       }
 
-      return this.findOne(id);
+      return updatedOrder;
     } catch (error) {
-      handleServiceError(
-        error,
-        'Failed to update order status',
-        'OrdersService',
-      );
+      handleServiceError(error, 'Failed to update order status', 'OrdersService');
     }
   }
 
@@ -314,17 +319,13 @@ export class OrdersService {
     try {
       const order = await this.findOne(id);
 
-      // Check if order belongs to the user or if user is admin (handled in controller)
       if (order.customer_id !== userId) {
         throw new BadRequestException('You can only cancel your own orders');
       }
 
-      // Validate status transition
       const allowedTransitions = ORDER_STATUS_TRANSITIONS[order.status];
       if (!allowedTransitions.includes(ORDER_STATUS.CANCELLED)) {
-        throw new BadRequestException(
-          `Cannot cancel order with status ${order.status}`,
-        );
+        throw new BadRequestException(`Cannot cancel order with status ${order.status}`);
       }
 
       order.status = ORDER_STATUS.CANCELLED;
@@ -340,12 +341,9 @@ export class OrdersService {
     try {
       const order = await this.findOne(id);
 
-      // Admin can cancel orders that are pending or paid
       const allowedTransitions = ORDER_STATUS_TRANSITIONS[order.status];
       if (!allowedTransitions.includes(ORDER_STATUS.CANCELLED)) {
-        throw new BadRequestException(
-          `Cannot cancel order with status ${order.status}`,
-        );
+        throw new BadRequestException(`Cannot cancel order with status ${order.status}`);
       }
 
       order.status = ORDER_STATUS.CANCELLED;
@@ -357,19 +355,17 @@ export class OrdersService {
     }
   }
 
-  async getOrderTotals(
-    orderIds: string[],
-  ): Promise<{ id: string; total_amount: number }[]> {
+  async getOrderTotals(orderIds: string[]): Promise<{ id: string; grand_total: number }[]> {
     try {
       if (orderIds.length === 0) return [];
 
       const orders = await this.orderRepo
         .createQueryBuilder('order')
-        .select(['order.id', 'order.total_amount'])
+        .select(['order.id', 'order.grand_total'])
         .where('order.id IN (:...orderIds)', { orderIds })
         .getMany();
 
-      return orders.map((o) => ({ id: o.id, total_amount: Number(o.total_amount) }));
+      return orders.map((o) => ({ id: o.id, grand_total: Number(o.grand_total) }));
     } catch (error) {
       handleServiceError(error, 'Failed to get order totals', 'OrdersService');
     }
@@ -378,26 +374,19 @@ export class OrdersService {
   async trackOrder(dto: TrackOrderDto): Promise<{
     order_id: string;
     status: ORDER_STATUS;
-    delivery: {
-      status: DELIVERY_STATUS;
-      tracking_number: string | null;
-      tracking_url: string | null;
-      delivery_method: string;
-    };
     created_at: Date;
     updated_at: Date;
   }> {
     try {
       const order = await this.orderRepo.findOne({
         where: { id: dto.order_id },
-        relations: ['delivery', 'customer'],
+        relations: ['customer'],
       });
 
       if (!order || !order.customer) {
         throw new NotFoundException('Order not found');
       }
 
-      // Verify phone number matches the customer record
       if (order.customer.phoneNumber !== dto.phone_number) {
         throw new NotFoundException('Order not found');
       }
@@ -405,12 +394,6 @@ export class OrdersService {
       return {
         order_id: order.id,
         status: order.status,
-        delivery: {
-          status: order.delivery?.status ?? DELIVERY_STATUS.PENDING,
-          tracking_number: order.delivery?.tracking_number ?? null,
-          tracking_url: order.delivery?.tracking_url ?? null,
-          delivery_method: order.delivery?.delivery_method ?? 'standard',
-        },
         created_at: order.created_at,
         updated_at: order.updated_at,
       };
@@ -423,12 +406,6 @@ export class OrdersService {
     orders: Array<{
       order_id: string;
       status: ORDER_STATUS;
-      delivery: {
-        status: DELIVERY_STATUS;
-        tracking_number: string | null;
-        tracking_url: string | null;
-        delivery_method: string;
-      };
       created_at: Date;
       updated_at: Date;
     }>;
@@ -437,7 +414,9 @@ export class OrdersService {
       let customer;
       try {
         customer = await this.customersService.findByPhone(phoneNumber);
-      } catch {
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to find customer by phone during order tracking: ${message}`);
         return { orders: [] };
       }
 
@@ -447,7 +426,6 @@ export class OrdersService {
           { customer_id: customer.id, status: ORDER_STATUS.PAID },
           { customer_id: customer.id, status: ORDER_STATUS.SHIPPED },
         ],
-        relations: ['delivery'],
         order: { created_at: 'DESC' },
       });
 
@@ -455,66 +433,24 @@ export class OrdersService {
         orders: orders.map((order) => ({
           order_id: order.id,
           status: order.status,
-          delivery: {
-            status: order.delivery?.status ?? DELIVERY_STATUS.PENDING,
-            tracking_number: order.delivery?.tracking_number ?? null,
-            tracking_url: order.delivery?.tracking_url ?? null,
-            delivery_method: order.delivery?.delivery_method ?? 'standard',
-          },
           created_at: order.created_at,
           updated_at: order.updated_at,
         })),
       };
     } catch (error) {
-      handleServiceError(
-        error,
-        'Failed to track orders by phone',
-        'OrdersService',
-      );
+      handleServiceError(error, 'Failed to track orders by phone', 'OrdersService');
     }
   }
 
-  async findByVendor(
-    vendorId: string,
-    query: OrderQueryDto,
-  ): Promise<PaginatedResponse<Order>> {
+  async findByVendor(vendorId: string, query: OrderQueryDto): Promise<PaginatedResponse<Order>> {
     try {
-      const productServiceUrl =
-        process.env.PRODUCT_SERVICE_URL || 'http://localhost:9002';
-      let variantIds: string[] = [];
-
-      try {
-        const res = await fetch(
-          `${productServiceUrl}/v1/products/vendor/${vendorId}/variant-ids`,
-        );
-        if (res.ok) {
-          const data = (await res.json()) as { variantIds: string[] };
-          variantIds = data.variantIds ?? [];
-        }
-      } catch (fetchErr) {
-        this.logger.warn(
-          `Failed to fetch variant IDs from product-service: ${(fetchErr as Error).message}`,
-        );
-      }
-
       const { page = 1, limit = 20, status } = query;
-
-      if (variantIds.length === 0) {
-        return { data: [], total: 0, page, limit, totalPages: 0 };
-      }
-
       const skip = (page - 1) * limit;
 
       const qb = this.orderRepo
         .createQueryBuilder('order')
-        .innerJoin(
-          'order.items',
-          'filterItem',
-          'filterItem.variant_id IN (:...variantIds)',
-          { variantIds },
-        )
+        .innerJoin('order.items', 'filterItem', 'filterItem.vendor_id = :vendorId', { vendorId })
         .leftJoinAndSelect('order.items', 'items')
-        .leftJoinAndSelect('order.delivery', 'delivery')
         .orderBy('order.created_at', 'DESC')
         .skip(skip)
         .take(limit);
@@ -527,11 +463,7 @@ export class OrdersService {
 
       return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
     } catch (error) {
-      handleServiceError(
-        error,
-        'Failed to fetch vendor orders',
-        'OrdersService',
-      );
+      handleServiceError(error, 'Failed to fetch vendor orders', 'OrdersService');
     }
   }
 }

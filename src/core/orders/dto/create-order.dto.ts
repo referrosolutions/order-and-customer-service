@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -10,55 +11,68 @@ import {
   ValidateNested,
   ArrayMinSize,
 } from 'class-validator';
+
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PAYMENT_METHOD } from 'src/core/enums';
 
+export class ShippingAddressDto {
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  street?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  postalCode?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  country?: string;
+}
+
 export class CreateOrderItemDto {
-  @ApiProperty({ description: 'Product variant ID', format: 'uuid' })
+  @ApiProperty({ description: 'Product ID' })
+  @IsUUID()
+  @IsNotEmpty()
+  product_id: string;
+
+  @ApiProperty({ description: 'Product variant ID' })
   @IsUUID()
   @IsNotEmpty()
   variant_id: string;
 
-  @ApiProperty({ description: 'Quantity to order', minimum: 1 })
-  @Type(() => Number)
+  @ApiProperty({ description: 'Vendor ID (product owner)' })
+  @IsUUID()
+  @IsNotEmpty()
+  vendor_id: string;
+
+  @ApiProperty({ description: 'Quantity', minimum: 1 })
   @IsNumber()
   @Min(1)
+  @Type(() => Number)
   quantity: number;
 
   @ApiProperty({ description: 'Unit price at time of order' })
-  @Type(() => Number)
   @IsNumber()
   @Min(0)
+  @Type(() => Number)
   unit_price: number;
 }
 
 export class CreateOrderDto {
-  @ApiProperty({
-    description: 'Payment method',
-    enum: PAYMENT_METHOD,
-    example: PAYMENT_METHOD.COD,
-  })
-  @IsEnum(PAYMENT_METHOD)
-  @IsNotEmpty()
-  payment_method: PAYMENT_METHOD;
-
-  @ApiPropertyOptional({
-    description: 'Creator ID for affiliate attribution',
-    format: 'uuid',
-  })
-  @IsUUID()
-  @IsOptional()
-  creator_id?: string;
-
-  @ApiPropertyOptional({
-    description: 'Affiliate link ID used to reach the product',
-    format: 'uuid',
-  })
-  @IsUUID()
-  @IsOptional()
-  affiliate_id?: string;
-
   @ApiProperty({
     description: 'Order items (at least one required)',
     type: [CreateOrderItemDto],
@@ -69,14 +83,32 @@ export class CreateOrderDto {
   @ArrayMinSize(1, { message: 'At least one order item is required' })
   items: CreateOrderItemDto[];
 
-  @ApiProperty({ description: 'Delivery method', example: 'standard' })
-  @IsString()
+  @ApiProperty({
+    description: 'Payment method',
+    enum: PAYMENT_METHOD,
+    example: PAYMENT_METHOD.COD,
+  })
+  @IsEnum(PAYMENT_METHOD)
   @IsNotEmpty()
-  delivery_method: string;
+  payment_method: PAYMENT_METHOD;
 
-  @ApiPropertyOptional({ description: 'Delivery charge', default: 0 })
+  @ApiPropertyOptional({ description: 'Delivery fee', default: 0 })
   @IsNumber()
   @Min(0)
   @IsOptional()
-  delivery_charge?: number;
+  delivery_fee?: number;
+
+  @ApiPropertyOptional({ description: 'Discount amount', default: 0 })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  discount_amount?: number;
+
+  @ApiPropertyOptional({ description: 'Shipping address (overrides customer default)' })
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ShippingAddressDto)
+  @IsOptional()
+  shipping_address?: ShippingAddressDto;
+
 }
