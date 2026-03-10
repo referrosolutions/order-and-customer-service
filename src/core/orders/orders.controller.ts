@@ -16,13 +16,15 @@ import {
 
 import type { Request } from 'express';
 import { USER_TYPE } from '../enums';
-import { IsAdminGuard, IsCreatorGuard, IsVendorGuard, IsVendorOrAdminGuard } from '../guards';
+import { IsAdminGuard, IsCreatorGuard, IsVendorGuard, IsVendorOrAdminGuard, IsVendorOrCreatorGuard } from '../guards';
+import { AdminOrderQueryDto } from './dto/admin-order-query.dto';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { TrackOrderDto } from './dto/track-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
+import { AdminOrderStats, OrderAdminView, PaginatedResponse } from 'src/types';
 
 @Controller('v1/orders')
 export class OrdersController {
@@ -48,14 +50,19 @@ export class OrdersController {
 
   @Get('me')
   async findMyOrders(@Req() req: Request, @Query() query: OrderQueryDto) {
-    const customerId = req.user!.id;
-    return this.ordersService.findByCustomer(customerId, query);
+    return this.ordersService.findMyOrders(req.user!.id, query);
   }
 
   @Get('vendor/me')
   @UseGuards(IsVendorGuard)
   async findVendorOrders(@Req() req: Request, @Query() query: OrderQueryDto) {
     return this.ordersService.findByVendor(req.user!.id, query);
+  }
+
+  @Get('vendor/analytics')
+  @UseGuards(IsVendorGuard)
+  async getVendorAnalytics(@Req() req: Request) {
+    return this.ordersService.getVendorAnalytics(req.user!.id);
   }
 
   @Get('creator/me')
@@ -65,9 +72,30 @@ export class OrdersController {
     return this.ordersService.findByCreator(creatorId, query);
   }
 
+  @Get('dashboard')
+  @UseGuards(IsVendorOrCreatorGuard)
+  async findDashboardOrders(@Req() req: Request, @Query() query: OrderQueryDto) {
+    if (req.user!.user_type === USER_TYPE.VENDOR) {
+      return this.ordersService.findByVendor(req.user!.id, query);
+    }
+    return this.ordersService.findByCreator(req.user!.id, query);
+  }
+
+  @Get('admin')
+  @UseGuards(IsAdminGuard)
+  async adminFindAll(@Query() query: AdminOrderQueryDto): Promise<PaginatedResponse<OrderAdminView>> {
+    return this.ordersService.adminFindAll(query);
+  }
+
+  @Get('admin/stats')
+  @UseGuards(IsAdminGuard)
+  async getAdminStats(): Promise<AdminOrderStats> {
+    return this.ordersService.getAdminStats();
+  }
+
   @Get(':id')
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.ordersService.findOne(id);
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    return this.ordersService.findOneForUser(id, req.user!);
   }
 
   @Patch(':id/status')

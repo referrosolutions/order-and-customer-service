@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { Customer } from '../../entity/customer.entity';
 import { Order } from '../../entity/order.entity';
-import { CreateCustomerDto, UpdateCustomerDto, FindOrCreateCustomerDto } from './dto';
+import { CreateCustomerDto, UpdateCustomerDto, FindOrCreateCustomerDto, UpdateByTokenDto } from './dto';
 import { CustomerOrderHistoryResponse } from '../../types';
 import { handleServiceError } from '../../utils/error';
 
@@ -106,6 +106,18 @@ export class CustomersService {
     return customer;
   }
 
+  async findByUserId(userId: string): Promise<Customer> {
+    const customer = await this.customerRepository.findOne({
+      where: { userId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Customer for user ${userId} not found`);
+    }
+
+    return customer;
+  }
+
   async findByPhone(phoneNumber: string): Promise<Customer> {
     const customer = await this.customerRepository.findOne({
       where: { phoneNumber },
@@ -187,6 +199,30 @@ export class CustomersService {
     });
 
     return customer ?? null;
+  }
+
+  async updateByToken(dto: UpdateByTokenDto): Promise<Customer> {
+    let phone_number: string;
+    try {
+      const payload = await this.jwtService.verifyAsync<{ phone_number: string }>(
+        dto.otp_verification_token,
+        { secret: process.env.JWT_SECRET },
+      );
+      phone_number = payload.phone_number;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired OTP verification token');
+    }
+
+    const customer = await this.customerRepository.findOne({ where: { phoneNumber: phone_number } });
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    customer.name = dto.name;
+    if (dto.email !== undefined) customer.email = dto.email;
+    if (dto.address !== undefined) customer.address = { ...customer.address, ...dto.address };
+
+    return this.customerRepository.save(customer);
   }
 
   async initFromOtp(otp_verification_token: string): Promise<Customer> {

@@ -70,6 +70,21 @@ export class CreateOrderItemDto {
   @Min(0)
   @Type(() => Number)
   unit_price: number;
+
+  @ApiPropertyOptional({ description: 'Product name (used for notifications and display)' })
+  @IsString()
+  @IsOptional()
+  product_name?: string;
+
+  @ApiPropertyOptional({ description: 'Product image URL for the ordered variant (variant image preferred, else primary)' })
+  @IsString()
+  @IsOptional()
+  product_image?: string;
+
+  @ApiPropertyOptional({ description: 'Variant label (e.g. "Red / XL" derived from attributes)' })
+  @IsString()
+  @IsOptional()
+  variant_label?: string;
 }
 
 export class CreateOrderDto {

@@ -38,6 +38,15 @@ export class OrderItem {
   @Column({ type: 'uuid', nullable: true })
   creator_id: string | null;
 
+  @Column({ type: 'varchar', default: '' })
+  product_name: string;
+
+  @Column({ type: 'varchar', default: '' })
+  product_image: string;
+
+  @Column({ type: 'varchar', default: '' })
+  variant_label: string;
+
   @Column({ type: 'int' })
   quantity: number;
 

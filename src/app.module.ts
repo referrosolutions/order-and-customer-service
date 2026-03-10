@@ -3,6 +3,8 @@ import { IsAuthMiddleware } from './core/middleware/isAuth.middleware';
 import { HealthModule } from './core/health/health.module';
 import { OrdersModule } from './core/orders/orders.module';
 import { CustomersModule } from './core/customers/customers.module';
+import { DeliveryModule } from './core/deliveries/delivery.module';
+import { CommissionsModule } from './core/commissions/commissions.module';
 
 import { ConfigModule } from '@nestjs/config';
 import { validate } from './config/env.validation';
@@ -12,6 +14,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Order } from './entity/order.entity';
 import { OrderItem } from './entity/order-item.entity';
 import { Customer } from './entity/customer.entity';
+import { Delivery } from './entity/delivery.entity';
+import { CommissionRecord } from './entity/commission-record.entity';
 import { JwtModule } from '@nestjs/jwt';
 
 @Module({
@@ -48,7 +52,7 @@ import { JwtModule } from '@nestjs/jwt';
       username: process.env.DATABASE_USERNAME,
       password: process.env.DATABASE_PASSWORD,
       database: process.env.DATABASE_NAME,
-      entities: [Order, OrderItem, Customer],
+      entities: [Order, OrderItem, Customer, Delivery, CommissionRecord],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: false,
       ssl: {
@@ -60,6 +64,8 @@ import { JwtModule } from '@nestjs/jwt';
     HealthModule,
     CustomersModule,
     OrdersModule,
+    DeliveryModule,
+    CommissionsModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -69,10 +75,11 @@ export class AppModule implements NestModule {
       .exclude(
         { path: 'v1/orders/track', method: RequestMethod.POST },
         { path: 'v1/orders/track/phone/:phoneNumber', method: RequestMethod.GET },
-        { path: 'v1/orders/guest', method: RequestMethod.POST },
+        { path: 'v1/orders/create', method: RequestMethod.POST },
         { path: 'v1/orders/internal/totals', method: RequestMethod.POST },
         { path: 'v1/customers/autofill', method: RequestMethod.POST },
         { path: 'v1/customers/init-guest', method: RequestMethod.POST },
+        { path: 'v1/customers/update-by-token', method: RequestMethod.PATCH },
         { path: 'health', method: RequestMethod.GET },
       )
       .forRoutes({ path: '*path', method: RequestMethod.ALL });

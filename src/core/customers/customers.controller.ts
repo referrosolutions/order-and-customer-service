@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Put,
   Delete,
   Body,
@@ -15,7 +16,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CustomersService } from './customers.service';
-import { CreateCustomerDto, UpdateCustomerDto, FindOrCreateCustomerDto, CustomerAutofillDto } from './dto';
+import { CreateCustomerDto, UpdateCustomerDto, FindOrCreateCustomerDto, CustomerAutofillDto, UpdateByTokenDto } from './dto';
 import { IsCreatorGuard } from '../guards';
 
 @ApiTags('customers')
@@ -45,6 +46,18 @@ export class CustomersController {
   @ApiResponse({ status: 401, description: 'Invalid or expired OTP verification token' })
   initGuest(@Body() dto: CustomerAutofillDto) {
     return this.customersService.initFromOtp(dto.otp_verification_token);
+  }
+
+  @Patch('update-by-token')
+  @ApiOperation({
+    summary: 'Update customer name/email/address using OTP verification token (public)',
+    description: 'Verifies the OTP token to identify the customer by phone number, then updates their name, email, and address. Used during checkout when the customer fills in their details before placing an order.',
+  })
+  @ApiResponse({ status: 200, description: 'Customer updated successfully' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired OTP verification token' })
+  @ApiResponse({ status: 404, description: 'Customer not found' })
+  updateByToken(@Body() dto: UpdateByTokenDto) {
+    return this.customersService.updateByToken(dto);
   }
 
   @ApiBearerAuth()
